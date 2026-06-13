@@ -985,6 +985,11 @@ header h1 { font-size: 14px; font-weight: bold; white-space: nowrap; }
             <option value="alpha">Alphabetical (A-Z)</option>
           </select>
         </div>
+        <div class="wb-backup-actions" style="display: flex; gap: 8px; margin-top: 8px;">
+          <button class="btn btn-secondary" onclick="exportWordBank()" style="flex: 1; font-size: 11px; padding: 6px;" type="button">📤 Export (Save File)</button>
+          <button class="btn btn-secondary" onclick="triggerImportWordBank()" style="flex: 1; font-size: 11px; padding: 6px;" type="button">📥 Import (Load File)</button>
+          <input type="file" id="wb-import-file" style="display: none;" onchange="importWordBank(event)">
+        </div>
       </div>
       <div class="wb-list" id="wb-list"></div>
       <div class="wb-add-custom">
@@ -3518,6 +3523,83 @@ function toggleWordMastery(key) {
     renderWordBankStats();
     renderWordBankList();
   }
+}
+
+// BACKUP SAVE / LOAD FUNCTIONS
+function exportWordBank() {
+  const bank = getWordBank();
+  if (Object.keys(bank).length === 0) {
+    alert("Your Word Bank is empty. Save some words before exporting!");
+    return;
+  }
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(bank, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", "nt2_word_bank.json");
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+function triggerImportWordBank() {
+  document.getElementById('wb-import-file').click();
+}
+
+function importWordBank(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const importedBank = JSON.parse(e.target.result);
+      if (typeof importedBank !== 'object' || importedBank === null) {
+        throw new Error("Invalid format");
+      }
+      
+      const currentBank = getWordBank();
+      let addedCount = 0;
+      let updatedCount = 0;
+      
+      for (const key in importedBank) {
+        if (importedBank.hasOwnProperty(key)) {
+          const item = importedBank[key];
+          if (item && item.word && item.translation) {
+            const normalizedKey = key.toLowerCase().trim();
+            if (currentBank[normalizedKey]) {
+              currentBank[normalizedKey] = {
+                word: item.word,
+                translation: item.translation,
+                addedAt: item.addedAt || new Date().toISOString(),
+                mastery: item.mastery || 0
+              };
+              updatedCount++;
+            } else {
+              currentBank[normalizedKey] = {
+                word: item.word,
+                translation: item.translation,
+                addedAt: item.addedAt || new Date().toISOString(),
+                mastery: item.mastery || 0
+              };
+              addedCount++;
+            }
+          }
+        }
+      }
+      
+      saveWordBank(currentBank);
+      renderWordBankStats();
+      renderWordBankList();
+      showPracticeMenu();
+      
+      alert(`Import complete!\nAdded: ${addedCount} new words\nUpdated: ${updatedCount} words`);
+    } catch (err) {
+      alert("Error parsing file. Make sure it is a valid backup JSON file.");
+      console.error(err);
+    }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
 }
 
 // UTILS
