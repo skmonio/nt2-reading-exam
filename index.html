@@ -573,6 +573,19 @@ header h1 { font-size: 14px; font-weight: bold; white-space: nowrap; }
   font-size: 14px; margin-top: 6px;
 }
 
+/* Word Highlight styles */
+.word-span {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.word-highlight-active .word-span {
+  cursor: pointer;
+}
+.word-span.highlighted {
+  background-color: #fef08a !important;
+  color: #854d0e !important;
+  border-radius: 3px;
+}
+
 /* Matching specific */
 .matching-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; max-width: 440px; margin: 14px auto 0;
@@ -917,6 +930,7 @@ header h1 { font-size: 14px; font-weight: bold; white-space: nowrap; }
     <button class="toggle-btn" onclick="confirmExitExam()">Exams</button>
     <button id="wordbank-btn" class="toggle-btn" onclick="showWordBank()">🗂️ Word Bank (0)</button>
     <button id="hover-btn" class="toggle-btn" onclick="toggleHover()">💬 Hover: UIT</button>
+    <button id="highlight-btn" class="toggle-btn" onclick="toggleHighlight()">💡 Highlight: OFF</button>
     <button id="lang-btn"  class="toggle-btn" onclick="toggleLang()">🇬🇧 English</button>
     <span class="hdr-progress" id="hdr-progress"></span>
     <button id="exam-hamburger-btn" class="hamburger-btn" onclick="toggleExamMenu(event)">☰</button>
@@ -924,6 +938,7 @@ header h1 { font-size: 14px; font-weight: bold; white-space: nowrap; }
       <button onclick="confirmExitExam()">🚪 Exams</button>
       <button onclick="showWordBank()">🗂️ Word Bank</button>
       <button id="menu-hover-btn" onclick="toggleHover()">💬 Hover: UIT</button>
+      <button id="menu-highlight-btn" onclick="toggleHighlight()">💡 Highlight: OFF</button>
       <button id="menu-lang-btn" onclick="toggleLang()">🇬🇧 English</button>
     </div>
   </div>
@@ -1068,6 +1083,8 @@ const i18n = {
     done:         "Klaar! Score:",
     hoverOn:      "💬 Hover: AAN",
     hoverOff:     "💬 Hover: UIT",
+    highlightOn:  "💡 Markeren: AAN",
+    highlightOff: "💡 Markeren: UIT",
     langSwitch:   "🇬🇧 English",
   },
   en: {
@@ -1086,6 +1103,8 @@ const i18n = {
     done:         "Done! Score:",
     hoverOn:      "💬 Hover: ON",
     hoverOff:     "💬 Hover: OFF",
+    highlightOn:  "💡 Highlight: ON",
+    highlightOff: "💡 Highlight: OFF",
     langSwitch:   "🇳🇱 Nederlands",
   }
 };
@@ -2512,6 +2531,7 @@ let submitted    = {};
 let scoreCorrect = 0, scoreTotal = 0;
 let activeTextId = 1;
 let hoverEnabled = false;
+let highlightEnabled = false;
 let langEN       = false;
 let activeExamKey = null;
 
@@ -2857,6 +2877,91 @@ function toggleHover() {
   renderQuestion(false, false);
 }
 
+function toggleHighlight() {
+  highlightEnabled = !highlightEnabled;
+  const txt = highlightEnabled ? t('highlightOn') : t('highlightOff');
+  
+  const btn = document.getElementById('highlight-btn');
+  if (btn) {
+    btn.textContent = txt;
+    btn.classList.toggle('on', highlightEnabled);
+  }
+  const menuBtn = document.getElementById('menu-highlight-btn');
+  if (menuBtn) {
+    menuBtn.textContent = txt;
+    menuBtn.classList.toggle('on', highlightEnabled);
+  }
+  
+  const shell = document.getElementById('exam-shell');
+  if (shell) {
+    shell.classList.toggle('word-highlight-active', highlightEnabled);
+  }
+  
+  // Clear any active highlights when toggling off
+  if (!highlightEnabled) {
+    document.querySelectorAll('.word-span.highlighted').forEach(span => {
+      span.classList.remove('highlighted');
+    });
+  }
+}
+
+function prepareAllWordsForHighlighting() {
+  const textContainer = document.getElementById('text-content');
+  const questionContainer = document.getElementById('question-body');
+  
+  [textContainer, questionContainer].forEach(container => {
+    if (!container) return;
+    
+    // 1. Tag existing hover spans as highlightable word spans
+    container.querySelectorAll('.hw, .qh').forEach(el => {
+      el.classList.add('word-span');
+      const cleanWord = el.textContent.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'']/g, "").toLowerCase();
+      if (cleanWord) {
+        el.dataset.word = cleanWord;
+      }
+    });
+    
+    // 2. Wrap all other plain text words in word-spans
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    
+    nodes.forEach(node => {
+      const parent = node.parentNode;
+      if (!node.textContent.trim()) return;
+      if (parent.closest && (
+        parent.closest('.word-span') || 
+        parent.closest('button') || 
+        parent.closest('input') || 
+        parent.closest('select') || 
+        parent.closest('option') ||
+        parent.tagName === 'SCRIPT' || 
+        parent.tagName === 'STYLE'
+      )) {
+        return;
+      }
+      
+      const frag = document.createDocumentFragment();
+      const parts = node.textContent.split(/([a-zA-ZÀ-ÿĀ-ɏ0-9]+(?:['-][a-zA-ZÀ-ÿĀ-ɏ0-9]+)*)/g);
+      let anyFound = false;
+      parts.forEach(part => {
+        if (/^[a-zA-ZÀ-ÿĀ-ɏ0-9]+(?:['-][a-zA-ZÀ-ÿĀ-ɏ0-9]+)*$/.test(part)) {
+          anyFound = true;
+          const sp = document.createElement('span');
+          sp.className = 'word-span';
+          sp.textContent = part;
+          sp.dataset.word = part.toLowerCase();
+          frag.appendChild(sp);
+        } else {
+          frag.appendChild(document.createTextNode(part));
+        }
+      });
+      if (anyFound) parent.replaceChild(frag, node);
+    });
+  });
+}
+
+
 // ═══════════════════════════════════════════════════════
 // LANGUAGE TOGGLE
 // ═══════════════════════════════════════════════════════
@@ -2881,6 +2986,13 @@ function toggleLang() {
   if (hoverBtn) hoverBtn.textContent = hoverTxt;
   const menuHoverBtn = document.getElementById('menu-hover-btn');
   if (menuHoverBtn) menuHoverBtn.textContent = hoverTxt;
+  
+  // update highlight button label without changing state
+  const highlightTxt = highlightEnabled ? t('highlightOn') : t('highlightOff');
+  const highlightBtn = document.getElementById('highlight-btn');
+  if (highlightBtn) highlightBtn.textContent = highlightTxt;
+  const menuHighlightBtn = document.getElementById('menu-highlight-btn');
+  if (menuHighlightBtn) menuHighlightBtn.textContent = highlightTxt;
   
   tt.style.display = 'none';
   renderTabs();
@@ -2907,6 +3019,7 @@ function renderTextContent(scrollSource = false, showSources = null) {
   const shouldShowSources = showSources ?? !!(q && q.textId === activeTextId && submitted[q.id]);
   if (shouldShowSources) highlightSources(scrollSource);
   if (hoverEnabled && (!langEN || !hasTranslation)) applyHover();
+  prepareAllWordsForHighlighting();
 }
 
 function highlightSources(scrollSource = false) {
@@ -3039,6 +3152,7 @@ function renderQuestion(scrollSource = false, syncText = true) {
     ${last && isSubmitted ? `<div class="score-final">${t('done')} <strong>${scoreCorrect} / ${scoreTotal}</strong></div>` : ''}
   `;
   applyQuestionHover();
+  prepareAllWordsForHighlighting();
 
   document.getElementById('hdr-progress').textContent = `${t('question')} ${currentIdx+1}/${questions.length}`;
   document.getElementById('hdr-label').textContent    = `${t('questions')} — ${answered}/${questions.length} ${t('answered')}`;
@@ -4412,6 +4526,33 @@ document.addEventListener('click', function(e) {
       closeWordBankPopover();
     }
   }
+});
+
+// WORD HIGHLIGHT ON HOVER EVENT LISTENERS
+document.addEventListener('mouseover', function(e) {
+  if (!highlightEnabled) return;
+  const wordSpan = e.target && typeof e.target.closest === 'function' ? e.target.closest('.word-span') : null;
+  if (!wordSpan) return;
+  
+  const word = wordSpan.dataset.word;
+  if (!word) return;
+  
+  document.querySelectorAll(`.word-span[data-word="${CSS.escape(word)}"]`).forEach(span => {
+    span.classList.add('highlighted');
+  });
+});
+
+document.addEventListener('mouseout', function(e) {
+  if (!highlightEnabled) return;
+  const wordSpan = e.target && typeof e.target.closest === 'function' ? e.target.closest('.word-span') : null;
+  if (!wordSpan) return;
+  
+  const word = wordSpan.dataset.word;
+  if (!word) return;
+  
+  document.querySelectorAll(`.word-span[data-word="${CSS.escape(word)}"]`).forEach(span => {
+    span.classList.remove('highlighted');
+  });
 });
 
 // ═══════════════════════════════════════════════════════
