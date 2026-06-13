@@ -566,6 +566,9 @@ header h1 { font-size: 14px; font-weight: bold; white-space: nowrap; }
 .spelling-input.incorrect {
   border-color: #c62828; background: #ffebee; color: #c62828;
 }
+.spelling-input.almost {
+  border-color: #ef6c00; background: #fff3e0; color: #e65100;
+}
 .spelling-feedback {
   font-size: 14px; margin-top: 6px;
 }
@@ -3237,6 +3240,43 @@ function closeWordBank() {
 }
 
 // WORD BANK LIST & SIDEBAR CONTROLLER
+let editingWordKey = null;
+
+function saveWordEdit(oldKey, newWord, newTranslation) {
+  const bank = getWordBank();
+  newWord = newWord.trim();
+  newTranslation = newTranslation.trim();
+  
+  if (!newWord || !newTranslation) {
+    alert("Word and translation cannot be empty.");
+    return;
+  }
+  
+  const newKey = newWord.toLowerCase().trim();
+  
+  // If the key changed, delete the old entry and save under the new key
+  if (newKey !== oldKey) {
+    const oldWordData = bank[oldKey] || {};
+    delete bank[oldKey];
+    bank[newKey] = {
+      word: newWord,
+      translation: newTranslation,
+      mastery: oldWordData.mastery !== undefined ? oldWordData.mastery : 0,
+      addedAt: oldWordData.addedAt || new Date().toISOString()
+    };
+  } else {
+    if (bank[oldKey]) {
+      bank[oldKey].word = newWord;
+      bank[oldKey].translation = newTranslation;
+    }
+  }
+  
+  saveWordBank(bank);
+  editingWordKey = null;
+  renderWordBankStats();
+  renderWordBankList();
+}
+
 function renderWordBankStats() {
   const bank = getWordBank();
   const words = Object.values(bank);
@@ -3299,6 +3339,25 @@ function renderWordBankList() {
     const starEmoji = isMastered ? '⭐' : '☆';
     const starTitle = isMastered ? 'Mark as learning' : 'Mark as mastered';
     const key = w.word.toLowerCase().trim();
+    const isEditing = editingWordKey === key;
+    
+    if (isEditing) {
+      return `
+        <div class="wb-item editing" data-key="${esc(key)}" style="border-color: #1a3a5c; background: #f8fafc;">
+          <div class="wb-item-info" style="display: flex; flex-direction: column; gap: 6px; width: 100%; padding-right: 8px;">
+            <input type="text" class="wb-edit-input wb-edit-word" value="${esc(w.word)}" placeholder="Dutch word" style="font-weight: bold; width: 100%; padding: 6px 10px; border: 1.5px solid #d7e0ea; border-radius: 6px; outline: none; font-size: 14px;">
+            <input type="text" class="wb-edit-input wb-edit-trans" value="${esc(w.translation)}" placeholder="Translation" style="width: 100%; padding: 6px 10px; border: 1.5px solid #d7e0ea; border-radius: 6px; outline: none; font-size: 13px;">
+          </div>
+          <div class="wb-item-actions" style="display: flex; gap: 4px; align-self: center;">
+            <button class="wb-action-btn btn-save-edit" title="Save" style="color: #2e7d32; font-size: 16px;">
+              💾
+            </button>
+            <button class="wb-action-btn btn-cancel-edit" title="Cancel" style="color: #64748b; font-size: 16px;">
+              ❌
+            </button>
+          </div>
+        </div>`;
+    }
     
     return `
       <div class="wb-item" data-key="${esc(key)}" data-word="${esc(w.word)}">
@@ -3309,6 +3368,9 @@ function renderWordBankList() {
           <div class="wb-item-trans">${esc(w.translation)}</div>
         </div>
         <div class="wb-item-actions">
+          <button class="wb-action-btn btn-edit" title="Edit word" style="font-size: 13px;">
+            ✏️
+          </button>
           <button class="wb-action-btn btn-star" title="${starTitle}">
             ${starEmoji}
           </button>
@@ -3318,6 +3380,19 @@ function renderWordBankList() {
         </div>
       </div>`;
   }).join('');
+
+  if (editingWordKey) {
+    setTimeout(() => {
+      const activeInput = listContainer.querySelector('.wb-edit-word');
+      if (activeInput) {
+        activeInput.focus();
+        // Move cursor to the end of input
+        const val = activeInput.value;
+        activeInput.value = '';
+        activeInput.value = val;
+      }
+    }, 50);
+  }
 }
 
 // TRANSLATION AND CUSTOM WORD SYSTEM
@@ -4093,6 +4168,36 @@ let spIndex = 0;
 let spScore = 0;
 let spTotalQuestions = 0;
 let spChecked = false;
+let spAttempts = 0;
+
+function getLevenshteinDistance(a, b) {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+function isAlmostCorrect(typed, correct) {
+  if (!typed || !correct) return false;
+  const dist = getLevenshteinDistance(typed, correct);
+  const len = correct.length;
+  if (dist === 1) return true;
+  if (dist === 2 && len >= 5) return true;
+  return false;
+}
 
 function startSpellingPractice() {
   const bank = getWordBank();
@@ -4115,6 +4220,7 @@ function renderSpellingQuestionScreen() {
   const panel = document.getElementById('wb-practice-panel');
   const currentWord = spList[spIndex];
   spChecked = false;
+  spAttempts = 0;
   
   const progressPercent = (spIndex / spTotalQuestions) * 100;
   
@@ -4150,8 +4256,6 @@ function renderSpellingQuestionScreen() {
 
   panel.querySelector('#sp-exit').addEventListener('click', showPracticeMenu);
   
-  // Speak listener removed
-  
   const input = panel.querySelector('#sp-typed');
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -4161,6 +4265,12 @@ function renderSpellingQuestionScreen() {
         nextSpellingQuestion();
       }
     }
+  });
+
+  input.addEventListener('input', () => {
+    input.classList.remove('correct', 'incorrect', 'almost');
+    const feedbackEl = document.getElementById('sp-feedback');
+    if (feedbackEl) feedbackEl.innerHTML = '';
   });
 
   const checkBtn = panel.querySelector('#sp-btn');
@@ -4189,7 +4299,6 @@ function handleSpellingKeydown(e) {
 
 function checkSpelling() {
   if (spChecked) return;
-  spChecked = true;
   
   const currentWord = spList[spIndex];
   const inputEl = document.getElementById('sp-typed');
@@ -4199,24 +4308,65 @@ function checkSpelling() {
   const typed = inputEl.value.trim().toLowerCase();
   const correct = currentWord.word.trim().toLowerCase();
   
-  const isCorrect = typed === correct;
+  if (!typed) return;
   
-  inputEl.disabled = true;
+  spAttempts++;
+  const isCorrect = typed === correct;
+  const isAlmost = isAlmostCorrect(typed, correct);
   
   if (isCorrect) {
-    spScore++;
+    spChecked = true;
+    inputEl.disabled = true;
+    inputEl.classList.remove('incorrect', 'almost');
     inputEl.classList.add('correct');
-    feedbackEl.innerHTML = `<span style="color: #2e7d32; font-weight: bold;">✓ Correct!</span>`;
+    
+    if (spAttempts === 1) {
+      spScore += 1;
+      feedbackEl.innerHTML = `<span style="color: #2e7d32; font-weight: bold;">✓ Correct! (+1 pt)</span>`;
+    } else {
+      spScore += 0.5;
+      feedbackEl.innerHTML = `<span style="color: #2e7d32; font-weight: bold;">✓ Correct! (+0.5 pt on attempt ${spAttempts})</span>`;
+    }
+    btnEl.textContent = spIndex === spTotalQuestions - 1 ? 'Finish Exercise' : 'Next Question →';
+  } else if (isAlmost) {
+    if (spAttempts < 3) {
+      inputEl.classList.remove('correct', 'incorrect');
+      inputEl.classList.add('almost');
+      feedbackEl.innerHTML = `<span style="color: #ef6c00; font-weight: bold;">⚠ Almost correct! Try again. (Attempt ${spAttempts} of 3)</span>`;
+      btnEl.textContent = 'Check Spelling';
+    } else {
+      spChecked = true;
+      inputEl.disabled = true;
+      inputEl.classList.remove('correct', 'incorrect');
+      inputEl.classList.add('almost');
+      spScore += 0.5;
+      feedbackEl.innerHTML = `
+        <span style="color: #ef6c00; font-weight: bold;">⚠ Almost correct. (Half point awarded).</span><br>
+        <span style="color: #475569; font-size: 13px;">Correct spelling: <strong id="sp-correct-word-text"></strong></span>
+      `;
+      feedbackEl.querySelector('#sp-correct-word-text').textContent = currentWord.word;
+      btnEl.textContent = spIndex === spTotalQuestions - 1 ? 'Finish Exercise' : 'Next Question →';
+    }
   } else {
-    inputEl.classList.add('incorrect');
-    feedbackEl.innerHTML = `
-      <span style="color: #c62828; font-weight: bold;">✗ Incorrect</span><br>
-      <span style="color: #475569; font-size: 13px;">Correct spelling: <strong id="sp-correct-word-text"></strong></span>
-    `;
-    feedbackEl.querySelector('#sp-correct-word-text').textContent = currentWord.word;
+    // Incorrect
+    if (spAttempts < 3) {
+      inputEl.classList.remove('correct', 'almost');
+      inputEl.classList.add('incorrect');
+      feedbackEl.innerHTML = `<span style="color: #c62828; font-weight: bold;">✗ Incorrect. Try again. (Attempt ${spAttempts} of 3)</span>`;
+      btnEl.textContent = 'Check Spelling';
+    } else {
+      spChecked = true;
+      inputEl.disabled = true;
+      inputEl.classList.remove('correct', 'almost');
+      inputEl.classList.add('incorrect');
+      feedbackEl.innerHTML = `
+        <span style="color: #c62828; font-weight: bold;">✗ Incorrect</span><br>
+        <span style="color: #475569; font-size: 13px;">Correct spelling: <strong id="sp-correct-word-text"></strong></span>
+      `;
+      feedbackEl.querySelector('#sp-correct-word-text').textContent = currentWord.word;
+      btnEl.textContent = spIndex === spTotalQuestions - 1 ? 'Finish Exercise' : 'Next Question →';
+    }
   }
-  
-  btnEl.textContent = spIndex === spTotalQuestions - 1 ? 'Finish Exercise' : 'Next Question →';
 }
 
 function nextSpellingQuestion() {
@@ -4272,6 +4422,9 @@ if (wbListEl) {
   wbListEl.addEventListener('click', function(e) {
     const starBtn = e.target.closest('.btn-star');
     const deleteBtn = e.target.closest('.btn-delete');
+    const editBtn = e.target.closest('.btn-edit');
+    const saveBtn = e.target.closest('.btn-save-edit');
+    const cancelBtn = e.target.closest('.btn-cancel-edit');
     const item = e.target.closest('.wb-item');
     
     if (!item) return;
@@ -4283,6 +4436,39 @@ if (wbListEl) {
     } else if (deleteBtn) {
       e.stopPropagation();
       removeWordFromBank(key);
+    } else if (editBtn) {
+      e.stopPropagation();
+      editingWordKey = key;
+      renderWordBankList();
+    } else if (saveBtn) {
+      e.stopPropagation();
+      const wordInput = item.querySelector('.wb-edit-word');
+      const transInput = item.querySelector('.wb-edit-trans');
+      saveWordEdit(key, wordInput.value, transInput.value);
+    } else if (cancelBtn) {
+      e.stopPropagation();
+      editingWordKey = null;
+      renderWordBankList();
+    }
+  });
+
+  wbListEl.addEventListener('keydown', function(e) {
+    const input = e.target.closest('.wb-edit-input');
+    if (!input) return;
+    
+    const item = input.closest('.wb-item');
+    if (!item) return;
+    const key = item.dataset.key;
+    
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const wordInput = item.querySelector('.wb-edit-word');
+      const transInput = item.querySelector('.wb-edit-trans');
+      saveWordEdit(key, wordInput.value, transInput.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      editingWordKey = null;
+      renderWordBankList();
     }
   });
 }
